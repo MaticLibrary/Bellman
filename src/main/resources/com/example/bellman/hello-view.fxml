@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.ComboBox?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.TextArea?>
+<?import javafx.scene.control.TextField?>
+<?import javafx.scene.layout.BorderPane?>
+<?import javafx.scene.layout.GridPane?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.Priority?>
+<?import javafx.scene.layout.Pane?>
+<?import javafx.scene.layout.VBox?>
+
+<BorderPane xmlns:fx="http://javafx.com/fxml" fx:controller="com.example.bellman.HelloController">
+    <left>
+        <VBox spacing="10.0" style="-fx-background-color: #f1f5fb; -fx-padding: 12;" prefWidth="320.0">
+            <Label text="Bellman-Ford Visualizer" style="-fx-font-size: 18px; -fx-font-weight: bold;"/>
+            <Label text="Tryby działania:" style="-fx-font-size: 13px; -fx-font-weight: bold;"/>
+            <HBox spacing="8.0">
+                <Button fx:id="addNodeButton" text="+ Dodaj węzeł" onAction="#onAddNodeMode" prefWidth="100"/>
+                <Button fx:id="addEdgeModeButton" text="+ Dodaj krawędź" onAction="#onAddEdgeMode" prefWidth="100"/>
+            </HBox>
+            <HBox spacing="8.0">
+                <Button fx:id="deleteButton" text="Usuń" onAction="#onDeleteMode" prefWidth="100"/>
+                <Button fx:id="createEdgeButton" text="Dodaj po ID" onAction="#onCreateEdgeByIds" prefWidth="120"/>
+            </HBox>
+            <Label text="Dodawanie krawędzi (ID węzłów):" style="-fx-font-size: 13px; -fx-font-weight: bold;"/>
+            <GridPane hgap="8" vgap="8">
+                <Label text="Źródło:" GridPane.rowIndex="0" GridPane.columnIndex="0"/>
+                <TextField fx:id="sourceField" promptText="ID" GridPane.rowIndex="0" GridPane.columnIndex="1"/>
+                <Label text="Cel:" GridPane.rowIndex="1" GridPane.columnIndex="0"/>
+                <TextField fx:id="targetField" promptText="ID" GridPane.rowIndex="1" GridPane.columnIndex="1"/>
+                <Label text="Waga:" GridPane.rowIndex="2" GridPane.columnIndex="0"/>
+                <TextField fx:id="weightField" promptText="1" GridPane.rowIndex="2" GridPane.columnIndex="1"/>
+            </GridPane>
+            <Label text="Źródło Bellman-Ford:" style="-fx-font-size: 13px; -fx-font-weight: bold;"/>
+            <HBox spacing="8.0">
+                <ComboBox fx:id="sourceCombo" prefWidth="160"/>
+                <Button fx:id="runButton" text="Uruchom" onAction="#onRunAlgorithm" prefWidth="120"/>
+            </HBox>
+            <HBox spacing="8.0">
+                <Button fx:id="resetButton" text="Reset" onAction="#onResetGraph" prefWidth="150"/>
+                <Button fx:id="clearButton" text="Wyczyść" onAction="#onClearGraph" prefWidth="150"/>
+            </HBox>
+            <Label text="Logi i wyniki:" style="-fx-font-size: 13px; -fx-font-weight: bold;"/>
+            <TextArea fx:id="logArea" editable="false" wrapText="true" prefHeight="280.0"/>
+        </VBox>
+    </left>
+    <center>
+        <Pane fx:id="graphPane" style="-fx-background-color: #f9fbff; -fx-border-color: #c8d2e8; -fx-border-width: 2;"/>
+    </center>
+    <bottom>
+        <Label fx:id="statusLabel" text="" style="-fx-padding: 10; -fx-font-size: 13px;"/>
+    </bottom>
+</BorderPane>
