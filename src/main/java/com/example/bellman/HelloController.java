@@ -22,15 +22,13 @@ import javafx.util.Duration;
 import java.net.URL;
 import java.util.*;
 
-/**
- * Kontroler dla wizualizacji algorytmu Bellmana-Forda.
- * Umożliwia tworzenie grafu, edycję wag, uruchamianie algorytmu i krokowe animacje.
- */
 public class HelloController implements Initializable {
 
-    // ---------------------------- FXML INIECTIONS ----------------------------
     @FXML private Pane graphPane;
     @FXML private ComboBox<String> sourceCombo;
+    @FXML private ComboBox<String> targetCombo;
+    @FXML private ComboBox<String> pathTypeCombo;
+    @FXML private CheckBox directedGraphCheckbox;
     @FXML private TextField sourceField;
     @FXML private TextField targetField;
     @FXML private TextField weightField;
@@ -44,28 +42,24 @@ public class HelloController implements Initializable {
     @FXML private TextArea logArea;
     @FXML private Label statusLabel;
 
-    // ---------------------------- TRYBY I WARSTWY ----------------------------
     private enum Mode { ADD_NODE, ADD_EDGE, DELETE, NONE }
     private Mode currentMode = Mode.ADD_NODE;
     private Group edgeLayer;
     private Group nodeLayer;
 
-    // ---------------------------- DANE GRAFU ----------------------------
     private int nextNodeId = 1;
     private final Map<Integer, GraphNode> nodes = new LinkedHashMap<>();
     private final List<GraphEdge> edges = new ArrayList<>();
-    private GraphNode edgeSourceNode;          // dla trybu dodawania krawędzi
+    private GraphNode edgeSourceNode;
     private Timeline algorithmTimeline;
-    private GraphEdge activeEdgeHighlight;     // aktualnie podświetlona krawędź podczas animacji
+    private GraphEdge activeEdgeHighlight;
 
-    // ---------------------------- INICJALIZACJA ----------------------------
     @Override
     public void initialize(URL url, ResourceBundle resourceBundle) {
         edgeLayer = new Group();
         nodeLayer = new Group();
         graphPane.getChildren().addAll(edgeLayer, nodeLayer);
 
-        // Kliknięcie w tło – dodanie węzła (tryb ADD_NODE)
         graphPane.setOnMouseClicked(e -> {
             if (e.getButton() != MouseButton.PRIMARY) return;
             if (currentMode == Mode.ADD_NODE) {
@@ -77,15 +71,19 @@ public class HelloController implements Initializable {
         });
 
         weightField.setText("1");
+        pathTypeCombo.getItems().setAll("Najkrótsza (min)", "Najdłuższa (max)");
+        pathTypeCombo.setValue("Najkrótsza (min)");
+        directedGraphCheckbox.setSelected(false); // domyślnie nieskierowany
         switchMode(Mode.ADD_NODE);
-        updateSourceCombo();
-        updateStatus("Tryb dodawania węzłów: kliknij w puste miejsce, aby dodać nowy węzeł.");
+        updateNodeCombos();
+        updateStatus("Tryb dodawania węzłów: kliknij w puste miejsce. Graf jest NIESKIEROWANY (możesz zmienić).");
     }
 
-    // ---------------------------- OBSŁUGA TRYBÓW (PRZYCISKI) ----------------------------
+    // ---------------------------- OBSŁUGA PRZYCISKÓW ----------------------------
     @FXML private void onAddNodeMode()   { switchMode(Mode.ADD_NODE); }
     @FXML private void onAddEdgeMode()   { switchMode(Mode.ADD_EDGE); }
     @FXML private void onDeleteMode()    { switchMode(Mode.DELETE); }
+
     @FXML private void onCreateEdgeByIds() {
         try {
             int srcId = Integer.parseInt(sourceField.getText().trim());
@@ -106,6 +104,7 @@ public class HelloController implements Initializable {
             updateStatus("Błąd: ID i waga muszą być liczbami całkowitymi.");
         }
     }
+
     @FXML private void onRunAlgorithm()   { startBellmanFord(); }
     @FXML private void onResetGraph()     { resetVisualization(); }
     @FXML private void onClearGraph()     { clearGraph(); }
@@ -137,33 +136,55 @@ public class HelloController implements Initializable {
         }
     }
 
-    // ---------------------------- OPERACJE NA WĘZŁACH I KRAWĘDZIACH ----------------------------
+    // ---------------------------- OPERACJE NA GRAFIE ----------------------------
     private void createNode(double x, double y) {
         int id = nextNodeId++;
         GraphNode node = new GraphNode(id, x, y);
         nodes.put(id, node);
         nodeLayer.getChildren().add(node.view);
-        updateSourceCombo();
+        updateNodeCombos();
         updateStatus("Dodano węzeł " + id + ". Możesz go przeciągnąć lub dodać krawędź.");
     }
 
+    /**
+     * Dodaje krawędź (lub dwie, jeśli graf nieskierowany).
+     * Dla nieskierowanego dodaje parę (source->target) i (target->source).
+     */
     private void addEdge(GraphNode source, GraphNode target, int weight) {
+        // Sprawdź, czy krawędź już istnieje w danym kierunku
         if (edges.stream().anyMatch(e -> e.source == source && e.target == target)) {
             updateStatus("Krawędź już istnieje: " + source.id + " -> " + target.id);
             return;
         }
+
+        // Dodaj krawędź główną
         GraphEdge edge = new GraphEdge(source, target, weight);
         edges.add(edge);
         edgeLayer.getChildren().add(edge.view);
         edge.updatePosition();
-        updateStatus("Dodano krawędź " + source.id + " -> " + target.id + ", waga = " + weight);
+
+        // Dla grafu nieskierowanego dodaj krawędź powrotną (jeśli jeszcze nie istnieje)
+        if (!directedGraphCheckbox.isSelected()) {
+            if (edges.stream().noneMatch(e -> e.source == target && e.target == source)) {
+                GraphEdge backEdge = new GraphEdge(target, source, weight);
+                edges.add(backEdge);
+                edgeLayer.getChildren().add(backEdge.view);
+                backEdge.updatePosition();
+                updateStatus("Dodano krawędź dwukierunkową " + source.id + " ↔ " + target.id + ", waga = " + weight);
+            } else {
+                updateStatus("Dodano krawędź " + source.id + " → " + target.id + " (powrotna już istniała)");
+            }
+        } else {
+            updateStatus("Dodano krawędź skierowaną " + source.id + " → " + target.id + ", waga = " + weight);
+        }
+
         if (currentMode == Mode.ADD_EDGE) {
             edgeSourceNode = null;
             highlightSelectedSource(null);
         }
     }
 
-    /** Obsługa kliknięcia prawym przyciskiem na krawędź – zmiana wagi */
+    /** Obsługa zmiany wagi – dla nieskierowanego również zmienia wagę krawędzi przeciwnej */
     private void handleEdgeRightClick(GraphEdge edge) {
         TextInputDialog dialog = new TextInputDialog(String.valueOf(edge.weight));
         dialog.setTitle("Edycja wagi");
@@ -175,8 +196,18 @@ public class HelloController implements Initializable {
                 int newWeight = Integer.parseInt(value);
                 edge.weight = newWeight;
                 edge.text.setText(String.valueOf(newWeight));
+                // Jeśli graf nieskierowany, znajdź krawędź przeciwną i zaktualizuj jej wagę
+                if (!directedGraphCheckbox.isSelected()) {
+                    edges.stream()
+                            .filter(e -> e.source == edge.target && e.target == edge.source)
+                            .findFirst()
+                            .ifPresent(backEdge -> {
+                                backEdge.weight = newWeight;
+                                backEdge.text.setText(String.valueOf(newWeight));
+                                backEdge.setDefaultStyle();
+                            });
+                }
                 updateStatus("Zmieniono wagę krawędzi " + edge.source.id + "→" + edge.target.id + " na " + newWeight);
-                // Odśwież wygląd (reset stylu)
                 edge.setDefaultStyle();
             } catch (NumberFormatException e) {
                 updateStatus("Błędna waga – musi być liczbą całkowitą.");
@@ -195,16 +226,20 @@ public class HelloController implements Initializable {
         });
         nodeLayer.getChildren().remove(node.view);
         nodes.remove(node.id);
-        updateSourceCombo();
+        updateNodeCombos();
         updateStatus("Usunięto węzeł " + node.id + " wraz z powiązanymi krawędziami.");
     }
 
-    private void updateSourceCombo() {
-        List<String> values = new ArrayList<>();
-        for (Integer id : nodes.keySet()) values.add(String.valueOf(id));
-        sourceCombo.getItems().setAll(values);
-        if (!values.isEmpty() && !values.contains(sourceCombo.getValue())) {
-            sourceCombo.setValue(values.get(0));
+    private void updateNodeCombos() {
+        List<String> ids = nodes.keySet().stream().map(String::valueOf).toList();
+        sourceCombo.getItems().setAll(ids);
+        targetCombo.getItems().setAll(ids);
+        if (!ids.isEmpty()) {
+            if (!ids.contains(sourceCombo.getValue())) sourceCombo.setValue(ids.get(0));
+            if (!ids.contains(targetCombo.getValue())) targetCombo.setValue(ids.get(0));
+        } else {
+            sourceCombo.setValue(null);
+            targetCombo.setValue(null);
         }
     }
 
@@ -240,81 +275,105 @@ public class HelloController implements Initializable {
             return;
         }
 
+        Integer targetId = null;
+        String targetValue = targetCombo.getValue();
+        if (targetValue != null && !targetValue.isBlank()) {
+            targetId = Integer.parseInt(targetValue);
+            if (!nodes.containsKey(targetId)) targetId = null;
+        }
+
+        boolean findLongest = "Najdłuższa (max)".equals(pathTypeCombo.getValue());
+
         resetVisualization();
-        BellmanFordResult result = computeBellmanFord(sourceId);
+        BellmanFordResult result = computeBellmanFord(sourceId, findLongest);
         if (result.steps.isEmpty()) {
             updateStatus("Brak krawędzi do przetworzenia.");
             return;
         }
         if (result.negativeCycle) {
-            logArea.appendText("UWAGA: wykryto ujemny cykl! Wyniki mogą być niepoprawne.\n");
+            logArea.appendText("UWAGA: wykryto " + (findLongest ? "cykl dodatni" : "ujemny cykl") + "! Wyniki mogą być niepoprawne.\n");
         }
-        runVisualization(result);
+        runVisualization(result, targetId, findLongest);
     }
 
-    private BellmanFordResult computeBellmanFord(int sourceId) {
+    private BellmanFordResult computeBellmanFord(int sourceId, boolean findLongest) {
         Map<Integer, Double> dist = new HashMap<>();
         Map<Integer, Integer> pred = new HashMap<>();
-        for (int id : nodes.keySet()) dist.put(id, Double.POSITIVE_INFINITY);
+        double INF = findLongest ? Double.NEGATIVE_INFINITY : Double.POSITIVE_INFINITY;
+        for (int id : nodes.keySet()) dist.put(id, INF);
         dist.put(sourceId, 0.0);
 
         List<BFVisualStep> steps = new ArrayList<>();
         int n = nodes.size();
 
-        // Relaksacje
         for (int i = 1; i < n; i++) {
             boolean changed = false;
             for (GraphEdge edge : edges) {
                 double uDist = dist.get(edge.source.id);
                 double vDist = dist.get(edge.target.id);
-                boolean relax = (uDist != Double.POSITIVE_INFINITY && uDist + edge.weight < vDist);
-                if (relax) {
-                    dist.put(edge.target.id, uDist + edge.weight);
-                    pred.put(edge.target.id, edge.source.id);
-                    changed = true;
+                boolean relax;
+                if (findLongest) {
+                    relax = (uDist != Double.NEGATIVE_INFINITY && uDist + edge.weight > vDist);
+                    if (relax) {
+                        dist.put(edge.target.id, uDist + edge.weight);
+                        pred.put(edge.target.id, edge.source.id);
+                        changed = true;
+                    }
+                } else {
+                    relax = (uDist != Double.POSITIVE_INFINITY && uDist + edge.weight < vDist);
+                    if (relax) {
+                        dist.put(edge.target.id, uDist + edge.weight);
+                        pred.put(edge.target.id, edge.source.id);
+                        changed = true;
+                    }
                 }
                 steps.add(new BFVisualStep(edge, relax, i));
             }
             if (!changed) break;
         }
 
-        // Wykrywanie ujemnego cyklu
         boolean negativeCycle = false;
         Set<GraphEdge> cycleEdges = new HashSet<>();
         for (GraphEdge edge : edges) {
             double uDist = dist.get(edge.source.id);
             double vDist = dist.get(edge.target.id);
-            if (uDist != Double.POSITIVE_INFINITY && uDist + edge.weight < vDist) {
-                negativeCycle = true;
-                cycleEdges.add(edge);
+            if (findLongest) {
+                if (uDist != Double.NEGATIVE_INFINITY && uDist + edge.weight > vDist) {
+                    negativeCycle = true;
+                    cycleEdges.add(edge);
+                }
+            } else {
+                if (uDist != Double.POSITIVE_INFINITY && uDist + edge.weight < vDist) {
+                    negativeCycle = true;
+                    cycleEdges.add(edge);
+                }
             }
         }
 
-        return new BellmanFordResult(sourceId, dist, pred, steps, negativeCycle, cycleEdges);
+        return new BellmanFordResult(sourceId, dist, pred, steps, negativeCycle, cycleEdges, findLongest);
     }
 
-    private void runVisualization(BellmanFordResult result) {
+    private void runVisualization(BellmanFordResult result, Integer targetId, boolean findLongest) {
         logArea.clear();
-        // Reset odległości w węzłach
-        nodes.values().forEach(n -> n.updateDistance(Double.POSITIVE_INFINITY));
+        nodes.values().forEach(n -> n.updateDistance(findLongest ? Double.NEGATIVE_INFINITY : Double.POSITIVE_INFINITY));
         nodes.get(result.sourceId).updateDistance(0.0);
         edges.forEach(GraphEdge::setDefaultStyle);
         activeEdgeHighlight = null;
 
         algorithmTimeline = new Timeline();
-        graphPane.setDisable(true);  // blokada interakcji podczas animacji
+        graphPane.setDisable(true);
 
         int stepIndex = 0;
         for (BFVisualStep step : result.steps) {
             double time = stepIndex * 320.0;
-            algorithmTimeline.getKeyFrames().add(new KeyFrame(Duration.millis(time), e -> applyStep(step)));
+            algorithmTimeline.getKeyFrames().add(new KeyFrame(Duration.millis(time), e -> applyStep(step, findLongest)));
             stepIndex++;
         }
-        algorithmTimeline.getKeyFrames().add(new KeyFrame(Duration.millis(stepIndex * 320.0 + 300), e -> finishVisualization(result)));
+        algorithmTimeline.getKeyFrames().add(new KeyFrame(Duration.millis(stepIndex * 320.0 + 300), e -> finishVisualization(result, targetId)));
         algorithmTimeline.play();
     }
 
-    private void applyStep(BFVisualStep step) {
+    private void applyStep(BFVisualStep step, boolean findLongest) {
         if (activeEdgeHighlight != null) activeEdgeHighlight.restoreAfterHighlight();
         activeEdgeHighlight = step.edge;
         activeEdgeHighlight.highlightActive();
@@ -335,16 +394,17 @@ public class HelloController implements Initializable {
                 step.edge.source.id, step.edge.target.id));
     }
 
-    private void finishVisualization(BellmanFordResult result) {
+    private void finishVisualization(BellmanFordResult result, Integer targetId) {
         if (activeEdgeHighlight != null) {
             activeEdgeHighlight.restoreAfterHighlight();
             activeEdgeHighlight = null;
         }
+
         if (result.negativeCycle) {
             result.cycleEdges.forEach(GraphEdge::setErrorStyle);
-            updateStatus("Wykryto ujemny cykl! Algorytm nie jest deterministyczny.");
+            updateStatus("Wykryto " + (result.findLongest ? "cykl dodatni" : "ujemny cykl") + "!");
         } else {
-            // Podświetl drzewo najkrótszych ścieżek
+            // Podświetlenie drzewa najtańszych/najdroższych ścieżek
             Set<GraphEdge> treeEdges = new HashSet<>();
             for (Map.Entry<Integer, Integer> entry : result.predecessor.entrySet()) {
                 GraphNode target = nodes.get(entry.getKey());
@@ -358,9 +418,38 @@ public class HelloController implements Initializable {
                 if (treeEdges.contains(edge)) edge.setSuccessStyle();
                 else edge.setDefaultStyle();
             }
-            updateStatus("Bellman-Ford zakończony. Wyniki zostały obliczone i wyróżnione.");
+
+            // Wyświetlenie ścieżki do wybranego węzła docelowego
+            if (targetId != null && nodes.containsKey(targetId)) {
+                Double distance = result.distances.get(targetId);
+                boolean reachable = result.findLongest ?
+                        distance != Double.NEGATIVE_INFINITY :
+                        distance != Double.POSITIVE_INFINITY;
+                if (reachable) {
+                    List<Integer> path = reconstructPath(result.predecessor, result.sourceId, targetId);
+                    String pathStr = path.stream().map(String::valueOf).reduce((a,b) -> a + " → " + b).orElse("");
+                    logArea.appendText("\n=== ŚCIEŻKA " + (result.findLongest ? "NAJDROŻSZA" : "NAJTAŃSZA") + " ===\n");
+                    logArea.appendText("Z węzła " + result.sourceId + " do " + targetId + ": " + pathStr + "\n");
+                    logArea.appendText("Całkowity koszt: " + (result.findLongest ? distance : distance) + "\n");
+                } else {
+                    logArea.appendText("\nWęzeł docelowy " + targetId + " jest nieosiągalny.\n");
+                }
+            }
+            updateStatus("Bellman-Ford zakończony. Wyniki obliczone.");
         }
         graphPane.setDisable(false);
+    }
+
+    private List<Integer> reconstructPath(Map<Integer, Integer> predecessor, int source, int target) {
+        List<Integer> path = new ArrayList<>();
+        Integer cur = target;
+        while (cur != null && cur != source) {
+            path.add(0, cur);
+            cur = predecessor.get(cur);
+        }
+        if (cur == source) path.add(0, source);
+        else path.clear();
+        return path;
     }
 
     private void resetVisualization() {
@@ -377,7 +466,7 @@ public class HelloController implements Initializable {
             } catch (NumberFormatException ignored) {}
         }
         logArea.clear();
-        updateStatus("Wizualizacja zresetowana. Możesz edytować graf.");
+        updateStatus("Wizualizacja zresetowana.");
     }
 
     private void clearGraph() {
@@ -387,12 +476,12 @@ public class HelloController implements Initializable {
         nodes.clear();
         edges.clear();
         nextNodeId = 1;
-        updateSourceCombo();
+        updateNodeCombos();
         logArea.clear();
         updateStatus("Graf wyczyszczony.");
     }
 
-    // ---------------------------- KLASY WEWNĘTRZNE: WĘZEŁ, KRAWĘDŹ, KROK WIZUALIZACJI ----------------------------
+    // ---------------------------- KLASY WEWNĘTRZNE ----------------------------
     private class GraphNode {
         final int id;
         final StackPane view;
@@ -407,7 +496,6 @@ public class HelloController implements Initializable {
             this.id = id;
             this.x = clamp(centerX, 40, graphPane.getWidth() - 40);
             this.y = clamp(centerY, 40, graphPane.getHeight() - 40);
-
             circle = new Circle(30, Color.WHITE);
             circle.setStroke(Color.DARKBLUE);
             circle.setStrokeWidth(3);
@@ -415,14 +503,12 @@ public class HelloController implements Initializable {
             idLabel.setFont(Font.font("System", FontWeight.BOLD, 14));
             distanceLabel = new Label("∞");
             distanceLabel.setFont(Font.font(11));
-
             view = new StackPane(circle, new VBox(2, idLabel, distanceLabel));
             view.setAlignment(javafx.geometry.Pos.CENTER);
             view.setPrefSize(60, 60);
             view.setLayoutX(x - 30);
             view.setLayoutY(y - 30);
 
-            // Obsługa zdarzeń myszy
             view.setOnMousePressed(e -> {
                 if (e.getButton() != MouseButton.PRIMARY) return;
                 if (currentMode == Mode.ADD_EDGE) {
@@ -448,7 +534,6 @@ public class HelloController implements Initializable {
                     e.consume();
                     return;
                 }
-                // Przeciąganie
                 Point2D local = graphPane.sceneToLocal(e.getSceneX(), e.getSceneY());
                 pressX = local.getX();
                 pressY = local.getY();
@@ -482,7 +567,10 @@ public class HelloController implements Initializable {
 
         void updateDistance(double value) {
             this.distance = value;
-            distanceLabel.setText(value == Double.POSITIVE_INFINITY ? "∞" : String.format("%.0f", value));
+            String text = (value == Double.POSITIVE_INFINITY) ? "∞" :
+                    (value == Double.NEGATIVE_INFINITY) ? "-∞" :
+                            String.format("%.0f", value);
+            distanceLabel.setText(text);
         }
 
         void setSelected(boolean selected) {
@@ -497,7 +585,7 @@ public class HelloController implements Initializable {
     private class GraphEdge {
         final GraphNode source;
         final GraphNode target;
-        int weight;                   // zmieniana waga
+        int weight;
         final Group view;
         final Line line;
         final Polygon arrow;
@@ -516,8 +604,6 @@ public class HelloController implements Initializable {
             text = new Label(String.valueOf(weight));
             text.setStyle("-fx-background-color: rgba(255,255,255,0.95); -fx-border-color: #666; -fx-padding: 2;");
             view = new Group(line, arrow, text);
-
-            // Kliknięcie prawym przyciskiem na widok krawędzi – zmiana wagi
             view.setOnMouseClicked(e -> {
                 if (e.getButton() == MouseButton.SECONDARY) {
                     handleEdgeRightClick(this);
@@ -601,5 +687,5 @@ public class HelloController implements Initializable {
     private record BellmanFordResult(int sourceId, Map<Integer, Double> distances,
                                      Map<Integer, Integer> predecessor,
                                      List<BFVisualStep> steps, boolean negativeCycle,
-                                     Set<GraphEdge> cycleEdges) {}
+                                     Set<GraphEdge> cycleEdges, boolean findLongest) {}
 }
