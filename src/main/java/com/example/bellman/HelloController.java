@@ -31,6 +31,7 @@ public class HelloController implements Initializable {
     // ---------------------------- FXML INIECTIONS ----------------------------
     @FXML private Pane graphPane;
     @FXML private ComboBox<String> sourceCombo;
+    @FXML private ComboBox<String> targetCombo;
     @FXML private TextField sourceField;
     @FXML private TextField targetField;
     @FXML private TextField weightField;
@@ -43,6 +44,8 @@ public class HelloController implements Initializable {
     @FXML private Button clearButton;
     @FXML private TextArea logArea;
     @FXML private Label statusLabel;
+    @FXML private ComboBox<String> pathTypeCombo;
+    @FXML private CheckBox directedGraphCheckbox;
 
     // ---------------------------- TRYBY I WARSTWY ----------------------------
     private enum Mode { ADD_NODE, ADD_EDGE, DELETE, NONE }
@@ -79,7 +82,38 @@ public class HelloController implements Initializable {
         weightField.setText("1");
         switchMode(Mode.ADD_NODE);
         updateSourceCombo();
+        // populate target combo and path type options
+        if (pathTypeCombo != null) {
+            pathTypeCombo.getItems().setAll("Najtańsza", "Najdroższa");
+            pathTypeCombo.setValue("Najtańsza");
+        }
+        if (targetCombo != null) updateTargetCombo();
+        
+        // Setup directed graph checkbox listener
+        if (directedGraphCheckbox != null) {
+            directedGraphCheckbox.setSelected(true); // default: directed
+            directedGraphCheckbox.selectedProperty().addListener((obs, old, isDirected) -> {
+                if (!edges.isEmpty()) {
+                    Alert alert = new Alert(Alert.AlertType.WARNING);
+                    alert.setTitle("Uwaga");
+                    alert.setHeaderText("Graf zawiera krawędzie");
+                    alert.setContentText("Zmiana trybu kierunkowości nie zmieni istniejących krawędzi. \nTryb dotyczy tylko nowych krawędzi.");
+                    alert.showAndWait();
+                }
+                updateDirectivityStatus();
+            });
+            updateDirectivityStatus();
+        }
         updateStatus("Tryb dodawania węzłów: kliknij w puste miejsce, aby dodać nowy węzeł.");
+    }
+    
+    private void updateDirectivityStatus() {
+        if (directedGraphCheckbox != null) {
+            boolean isDirected = directedGraphCheckbox.isSelected();
+            String mode = isDirected ? "SKIEROWANY (→)" : "DWUKIERUNKOWY (↔)";
+            updateStatus("Tryb: " + mode);
+        }
+    }
     }
 
     // ---------------------------- OBSŁUGA TRYBÓW (PRZYCISKI) ----------------------------
@@ -106,7 +140,7 @@ public class HelloController implements Initializable {
             updateStatus("Błąd: ID i waga muszą być liczbami całkowitymi.");
         }
     }
-    @FXML private void onRunAlgorithm()   { startBellmanFord(); }
+    @FXML private void onRunAlgorithm()   { runPathSearch(); }
     @FXML private void onResetGraph()     { resetVisualization(); }
     @FXML private void onClearGraph()     { clearGraph(); }
 
@@ -161,6 +195,21 @@ public class HelloController implements Initializable {
             edgeSourceNode = null;
             highlightSelectedSource(null);
         }
+        // if graph is undirected, add reverse edge as separate GraphEdge
+        boolean directed = true;
+        if (directedGraphCheckbox != null) directed = directedGraphCheckbox.isSelected();
+        if (!directed) {
+            boolean reverseExists = edges.stream().anyMatch(e -> e.source == target && e.target == source);
+            if (!reverseExists) {
+                GraphEdge rev = new GraphEdge(target, source, weight);
+                edges.add(rev);
+                edgeLayer.getChildren().add(rev.view);
+                rev.updatePosition();
+                updateStatus("Dodano krawędź dwukierunkową: " + source.id + " ↔ " + target.id + " (waga: " + weight + ")");
+            }
+        } else {
+            updateStatus("Dodano krawędź skierowaną: " + source.id + " → " + target.id + " (waga: " + weight + ")");
+        }
     }
 
     /** Obsługa kliknięcia prawym przyciskiem na krawędź – zmiana wagi */
@@ -206,8 +255,25 @@ public class HelloController implements Initializable {
         if (!values.isEmpty() && !values.contains(sourceCombo.getValue())) {
             sourceCombo.setValue(values.get(0));
         }
+        if (targetCombo != null) {
+            targetCombo.getItems().setAll(values);
+            if (!values.isEmpty() && !values.contains(targetCombo.getValue())) {
+                // prefer a different default if possible
+                if (values.size() > 1) targetCombo.setValue(values.get(1)); else targetCombo.setValue(values.get(0));
+            }
+        }
     }
 
+    private void updateTargetCombo() {
+        List<String> values = new ArrayList<>();
+        for (Integer id : nodes.keySet()) values.add(String.valueOf(id));
+        if (targetCombo != null) {
+            targetCombo.getItems().setAll(values);
+            if (!values.isEmpty() && !values.contains(targetCombo.getValue())) {
+                if (values.size() > 1) targetCombo.setValue(values.get(1)); else targetCombo.setValue(values.get(0));
+            }
+        }
+    }
     private boolean isPointOverNode(Point2D point) {
         return nodes.values().stream().anyMatch(n -> n.contains(point));
     }
@@ -291,6 +357,233 @@ public class HelloController implements Initializable {
         }
 
         return new BellmanFordResult(sourceId, dist, pred, steps, negativeCycle, cycleEdges);
+    }
+
+    // ---------------------------- EXHAUSTIVE PATH SEARCH (ALL SIMPLE PATHS) ----------------------------
+    private static class PathSearchResult {
+        List<GraphEdge> pathEdges;
+        double weight;
+        int pathsChecked;
+        PathSearchResult(List<GraphEdge> pathEdges, double weight, int pathsChecked) {
+            this.pathEdges = pathEdges;
+            this.weight = weight;
+            this.pathsChecked = pathsChecked;
+        }
+    }
+
+    private void runPathSearch() {
+        resetVisualization();
+        if (nodes.isEmpty()) {
+            updateStatus("Brak węzłów do analizy.");
+            return;
+        }
+        String sourceValue = sourceCombo.getValue();
+        String targetValue = (targetCombo != null ? targetCombo.getValue() : null);
+        if (sourceValue == null || sourceValue.isBlank() || targetValue == null || targetValue.isBlank()) {
+            updateStatus("Wybierz źródło i cel z listy.");
+            return;
+        }
+        int sourceId = Integer.parseInt(sourceValue);
+        int targetId = Integer.parseInt(targetValue);
+        if (!nodes.containsKey(sourceId) || !nodes.containsKey(targetId)) {
+            updateStatus("Wybrane węzły nie istnieją.");
+            return;
+        }
+
+        boolean findMin = true;
+        if (pathTypeCombo != null && "Najdroższa".equals(pathTypeCombo.getValue())) findMin = false;
+
+        // detect cycles on any path between source and target
+        boolean hasCycleOnPath = detectCycleOnPath(sourceId, targetId);
+        if (hasCycleOnPath) {
+            logArea.appendText("UWAGA: wykryto cykl możliwy do odwiedzenia na ścieżce między źródłem a celem.\n");
+        }
+
+        PathSearchResult result = computeAllSimplePaths(sourceId, targetId, findMin);
+        if (!findMin && hasPositiveCycleOnPath(sourceId, targetId)) {
+            logArea.appendText("UWAGA: najdroższa ścieżka może być nieograniczona z powodu dodatniego cyklu.\n");
+        }
+        if (result.pathEdges == null || result.pathEdges.isEmpty()) {
+            logArea.appendText("Brak ścieżki między wybranymi węzłami.\n");
+            updateStatus("Brak ścieżki między wybranymi węzłami.");
+            return;
+        }
+
+        // Highlight resulting path
+        edges.forEach(GraphEdge::setDefaultStyle);
+        for (GraphEdge e : result.pathEdges) e.setSuccessStyle();
+
+        // Build node sequence string
+        StringBuilder sb = new StringBuilder();
+        sb.append("Znaleziona ścieżka: ");
+        sb.append(result.pathEdges.get(0).source.id);
+        for (GraphEdge e : result.pathEdges) {
+            sb.append(" -> ").append(e.target.id);
+        }
+        sb.append(String.format("  (waga: %.0f)\n", result.weight));
+        sb.append(String.format("Sprawdzono %d ścieżek.\n", result.pathsChecked));
+        logArea.appendText(sb.toString());
+        updateStatus("Znaleziono ścieżkę.");
+    }
+
+    private PathSearchResult computeAllSimplePaths(int sourceId, int targetId, boolean findMin) {
+        GraphNode source = nodes.get(sourceId);
+        GraphNode target = nodes.get(targetId);
+        List<GraphEdge>[] bestPathRef = new List[1];
+        double[] bestWeightRef = new double[]{findMin ? Double.POSITIVE_INFINITY : Double.NEGATIVE_INFINITY};
+        int[] pathsChecked = {0};
+
+        Set<Integer> visited = new HashSet<>();
+        visited.add(sourceId);
+
+        List<GraphEdge> current = new ArrayList<>();
+
+        // DFS
+        class Helper {
+            void dfs(GraphNode node, double acc) {
+                if (node == target) {
+                    pathsChecked[0]++;
+                    if (findMin) {
+                        if (acc < bestWeightRef[0]) {
+                            bestWeightRef[0] = acc;
+                            bestPathRef[0] = new ArrayList<>(current);
+                        }
+                    } else {
+                        if (acc > bestWeightRef[0]) {
+                            bestWeightRef[0] = acc;
+                            bestPathRef[0] = new ArrayList<>(current);
+                        }
+                    }
+                    return;
+                }
+                for (GraphEdge e : edges) {
+                    if (e.source != node) continue;
+                    int nid = e.target.id;
+                    if (visited.contains(nid)) continue; // only simple paths
+                    visited.add(nid);
+                    current.add(e);
+                    dfs(e.target, acc + e.weight);
+                    current.remove(current.size() - 1);
+                    visited.remove(nid);
+                }
+            }
+        }
+        new Helper().dfs(source, 0.0);
+
+        return new PathSearchResult(bestPathRef[0] == null ? Collections.emptyList() : bestPathRef[0], bestWeightRef[0], pathsChecked[0]);
+    }
+
+    private boolean detectCycleOnPath(int sourceId, int targetId) {
+        // nodes reachable from source
+        Set<Integer> fromSource = bfsForward(sourceId);
+        // nodes that can reach target (reverse BFS)
+        Set<Integer> toTarget = bfsReverse(targetId);
+        fromSource.retainAll(toTarget);
+        if (fromSource.isEmpty()) return false;
+        return hasCycleInSubgraph(fromSource);
+    }
+
+    private boolean hasPositiveCycleOnPath(int sourceId, int targetId) {
+        Set<Integer> fromSource = bfsForward(sourceId);
+        Set<Integer> toTarget = bfsReverse(targetId);
+        fromSource.retainAll(toTarget);
+        if (fromSource.isEmpty()) return false;
+        return hasPositiveCycleInSubgraph(fromSource);
+    }
+
+    private boolean hasPositiveCycleInSubgraph(Set<Integer> subset) {
+        Set<Integer> stack = new HashSet<>();
+        Deque<GraphEdge> path = new ArrayDeque<>();
+        for (int start : subset) {
+            if (dfsPositiveCycle(start, start, stack, path, subset)) return true;
+        }
+        return false;
+    }
+
+    private boolean dfsPositiveCycle(int start, int current, Set<Integer> stack, Deque<GraphEdge> path, Set<Integer> subset) {
+        if (stack.contains(current)) {
+            return false;
+        }
+        stack.add(current);
+        for (GraphEdge edge : edges) {
+            if (edge.source.id != current) continue;
+            int next = edge.target.id;
+            if (!subset.contains(next)) continue;
+            path.addLast(edge);
+            if (next == start) {
+                double cycleWeight = 0;
+                for (GraphEdge e : path) cycleWeight += e.weight;
+                if (cycleWeight > 0) {
+                    path.removeLast();
+                    stack.remove(current);
+                    return true;
+                }
+            } else if (!stack.contains(next)) {
+                if (dfsPositiveCycle(start, next, stack, path, subset)) {
+                    path.removeLast();
+                    stack.remove(current);
+                    return true;
+                }
+            }
+            path.removeLast();
+        }
+        stack.remove(current);
+        return false;
+    }
+
+    private Set<Integer> bfsForward(int startId) {
+        Set<Integer> seen = new HashSet<>();
+        Deque<Integer> q = new ArrayDeque<>();
+        seen.add(startId); q.add(startId);
+        while (!q.isEmpty()) {
+            int cur = q.poll();
+            for (GraphEdge e : edges) if (e.source.id == cur) {
+                int nid = e.target.id;
+                if (!seen.contains(nid)) { seen.add(nid); q.add(nid); }
+            }
+        }
+        return seen;
+    }
+
+    private Set<Integer> bfsReverse(int targetId) {
+        // build reverse adjacency via edges
+        Map<Integer, List<Integer>> rev = new HashMap<>();
+        for (GraphEdge e : edges) rev.computeIfAbsent(e.target.id, k -> new ArrayList<>()).add(e.source.id);
+        Set<Integer> seen = new HashSet<>();
+        Deque<Integer> q = new ArrayDeque<>();
+        seen.add(targetId); q.add(targetId);
+        while (!q.isEmpty()) {
+            int cur = q.poll();
+            List<Integer> preds = rev.getOrDefault(cur, Collections.emptyList());
+            for (int p : preds) if (!seen.contains(p)) { seen.add(p); q.add(p); }
+        }
+        return seen;
+    }
+
+    private boolean hasCycleInSubgraph(Set<Integer> subset) {
+        Map<Integer, Integer> color = new HashMap<>(); // 0=white,1=gray,2=black
+        for (int v : subset) color.put(v, 0);
+        for (int v : subset) {
+            if (color.get(v) == 0) {
+                if (dfsCycle(v, color, subset)) return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean dfsCycle(int v, Map<Integer, Integer> color, Set<Integer> subset) {
+        color.put(v, 1);
+        for (GraphEdge e : edges) {
+            if (e.source.id != v) continue;
+            int to = e.target.id;
+            if (!subset.contains(to)) continue;
+            if (color.getOrDefault(to,0) == 1) return true;
+            if (color.getOrDefault(to,0) == 0) {
+                if (dfsCycle(to, color, subset)) return true;
+            }
+        }
+        color.put(v, 2);
+        return false;
     }
 
     private void runVisualization(BellmanFordResult result) {
