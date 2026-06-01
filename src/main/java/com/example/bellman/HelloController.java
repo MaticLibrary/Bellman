@@ -156,6 +156,18 @@ public class HelloController implements Initializable {
         edges.add(edge);
         edgeLayer.getChildren().add(edge.view);
         edge.updatePosition();
+        
+        // Sprawdź czy zwrotna krawędź już istnieje i zaktualizuj wizualizację obu
+        edges.stream()
+            .filter(e -> (e.source == target && e.target == source))
+            .forEach(reverseEdge -> {
+                edge.checkAndSetBidirectional();
+                reverseEdge.checkAndSetBidirectional();
+                edge.updatePosition();
+                reverseEdge.updatePosition();
+                reverseEdge.setDefaultStyle();
+            });
+        
         updateStatus("Dodano krawędź " + source.id + " -> " + target.id + ", waga = " + weight);
         if (currentMode == Mode.ADD_EDGE) {
             edgeSourceNode = null;
@@ -261,7 +273,7 @@ public class HelloController implements Initializable {
         List<BFVisualStep> steps = new ArrayList<>();
         int n = nodes.size();
 
-        // Relaksacje
+        // Relaksacje - NAPRAWKA: Dodaj kroki tylko dla zrelaksowanych krawędzi, aby uniknąć pętli
         for (int i = 1; i < n; i++) {
             boolean changed = false;
             for (GraphEdge edge : edges) {
@@ -272,10 +284,11 @@ public class HelloController implements Initializable {
                     dist.put(edge.target.id, uDist + edge.weight);
                     pred.put(edge.target.id, edge.source.id);
                     changed = true;
+                    // Dodaj krok TYLKO dla zrelaksowanych krawędzi
+                    steps.add(new BFVisualStep(edge, true, i));
                 }
-                steps.add(new BFVisualStep(edge, relax, i));
             }
-            if (!changed) break;
+            if (!changed) break;  // Zatrzymaj iteracje jeśli nic się nie zmieniło
         }
 
         // Wykrywanie ujemnego cyklu
@@ -503,6 +516,8 @@ public class HelloController implements Initializable {
         final Polygon arrow;
         final Label text;
         private boolean relaxed = false;
+        private boolean isBidirectional = false;  // czy istnieje krawędź w obie strony
+        private double offsetAmount = 0.0;         // offset dla krawędzi dwukierunkowych
 
         GraphEdge(GraphNode source, GraphNode target, int weight) {
             this.source = source;
@@ -524,6 +539,20 @@ public class HelloController implements Initializable {
                     e.consume();
                 }
             });
+            
+            // Sprawdź czy istnieje krawędź zwrotna
+            checkAndSetBidirectional();
+        }
+        
+        /** Sprawdzenie czy istnieje krawędź w obie strony i ustawienie offsetu */
+        private void checkAndSetBidirectional() {
+            boolean hasBidirectional = edges.stream()
+                    .anyMatch(e -> e.source == target && e.target == source);
+            if (hasBidirectional) {
+                isBidirectional = true;
+                // Offset w obie strony - ta z mniejszym ID offsetuje w prawo
+                offsetAmount = source.id < target.id ? 15 : -15;
+            }
         }
 
         void updatePosition() {
@@ -533,8 +562,13 @@ public class HelloController implements Initializable {
             double dist = dir.magnitude();
             if (dist < 1) dist = 1;
             Point2D unit = dir.normalize();
-            Point2D start = from.add(unit.multiply(30));
-            Point2D end = to.subtract(unit.multiply(30));
+            
+            // Dla krawędzi dwukierunkowych - offsetuj prostopadle
+            Point2D perpendicular = new Point2D(-unit.getY(), unit.getX());
+            Point2D offsetVector = perpendicular.multiply(offsetAmount);
+            
+            Point2D start = from.add(unit.multiply(30)).add(offsetVector);
+            Point2D end = to.subtract(unit.multiply(30)).add(offsetVector);
 
             line.setStartX(start.getX());
             line.setStartY(start.getY());
@@ -546,39 +580,54 @@ public class HelloController implements Initializable {
             double angle = Math.toDegrees(Math.atan2(dir.getY(), dir.getX()));
             arrow.setRotate(angle);
 
-            text.setLayoutX((start.getX() + end.getX()) / 2 - 14);
-            text.setLayoutY((start.getY() + end.getY()) / 2 - 16);
+            // Przesunięcie tekstu wagi dla lepszej widoczności
+            Point2D textOffset = offsetAmount != 0 ? perpendicular.multiply(offsetAmount / 2.5) : new Point2D(0, 0);
+            text.setLayoutX((start.getX() + end.getX()) / 2 - 14 + textOffset.getX());
+            text.setLayoutY((start.getY() + end.getY()) / 2 - 16 + textOffset.getY());
         }
 
         void setDefaultStyle() {
             relaxed = false;
-            line.setStroke(Color.GRAY);
-            arrow.setFill(Color.GRAY);
-            line.setOpacity(0.8);
+            Color color = isBidirectional ? Color.web("#2196F3") : Color.GRAY;
+            double strokeWidth = isBidirectional ? 2.5 : 2;
+            line.setStroke(color);
+            arrow.setFill(color);
+            line.setStrokeWidth(strokeWidth);
+            line.setOpacity(isBidirectional ? 0.9 : 0.8);
         }
 
         void setSuccessStyle() {
-            line.setStroke(Color.GREEN);
-            arrow.setFill(Color.GREEN);
+            Color color = isBidirectional ? Color.web("#00BCD4") : Color.GREEN;
+            double strokeWidth = isBidirectional ? 2.5 : 2;
+            line.setStroke(color);
+            arrow.setFill(color);
+            line.setStrokeWidth(strokeWidth);
             line.setOpacity(1.0);
         }
 
         void setErrorStyle() {
             line.setStroke(Color.CRIMSON);
             arrow.setFill(Color.CRIMSON);
+            line.setStrokeWidth(isBidirectional ? 2.5 : 2);
             line.setOpacity(1.0);
         }
 
         void highlightActive() {
-            line.setStroke(Color.ORANGE);
-            arrow.setFill(Color.ORANGE);
+            Color color = isBidirectional ? Color.web("#FF9800") : Color.ORANGE;
+            double strokeWidth = isBidirectional ? 2.5 : 2;
+            line.setStroke(color);
+            arrow.setFill(color);
+            line.setStrokeWidth(strokeWidth);
             line.setOpacity(1.0);
         }
 
         void markRelaxed() {
             relaxed = true;
-            line.setStroke(Color.DODGERBLUE);
-            arrow.setFill(Color.DODGERBLUE);
+            Color color = isBidirectional ? Color.web("#009688") : Color.DODGERBLUE;
+            double strokeWidth = isBidirectional ? 2.5 : 2;
+            line.setStroke(color);
+            arrow.setFill(color);
+            line.setStrokeWidth(strokeWidth);
         }
 
         void restoreAfterHighlight() {
